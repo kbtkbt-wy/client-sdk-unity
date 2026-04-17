@@ -82,6 +82,8 @@ namespace LiveKit
         private bool _started = false;
         private volatile bool _disposed = false;
         private int _audioReadCount = 0;
+        private bool _captureRegisteredToAec = false;
+        private short[] _pcm16Scratch;
 
         protected RtcAudioSource(int channels = 2, RtcAudioSourceType audioSourceType = RtcAudioSourceType.AudioSourceCustom)
         {
@@ -99,9 +101,9 @@ namespace LiveKit
             UnityEngine.Debug.Log($"NewAudioSource: {newAudioSource.NumChannels} {newAudioSource.SampleRate}");
 
             newAudioSource.Options = request.TempResource<AudioSourceOptions>();
-            newAudioSource.Options.EchoCancellation = true;
-            newAudioSource.Options.AutoGainControl = true;
-            newAudioSource.Options.NoiseSuppression = true;
+            newAudioSource.Options.EchoCancellation = false;
+            newAudioSource.Options.AutoGainControl = false;
+            newAudioSource.Options.NoiseSuppression = false;
             using var response = request.Send();
             FfiResponse res = response;
             _info = res.NewAudioSource.Source.Info;
@@ -117,6 +119,11 @@ namespace LiveKit
             if (_started) return;
             AudioRead += OnAudioRead;
             _started = true;
+            if (_sourceType == RtcAudioSourceType.AudioSourceMicrophone && !_captureRegisteredToAec)
+            {
+                AecBus.AcquireCapture();
+                _captureRegisteredToAec = true;
+            }
             Utils.Debug($"{DebugTag} start");
         }
 
@@ -133,6 +140,8 @@ namespace LiveKit
                 Utils.Warning($"{DebugTag} stop requested with {pendingCount} pending capture callbacks");
             else
                 Utils.Debug($"{DebugTag} stop");
+
+            ReleaseAecCaptureRegistration();
         }
 
         private void OnAudioRead(float[] data, int channels, int sampleRate)
@@ -164,10 +173,6 @@ namespace LiveKit
                 Utils.Debug($"{DebugTag} capture frame #{frameIndex} samples={data.Length} channels={channels} sampleRate={sampleRate} pendingBeforeSend={pendingBeforeSend} thread={Thread.CurrentThread.ManagedThreadId}");
             }
 
-            // Each captured frame gets its own backing buffer so the native encoder can safely
-            // consume it asynchronously after request.Send() returns.
-            var frameData = new NativeArray<short>(data.Length, Allocator.Persistent);
-
             // Copy from the audio read buffer into the frame buffer, converting
             // each sample to a 16-bit signed integer.
             static short FloatToS16(float v)
@@ -177,8 +182,21 @@ namespace LiveKit
                 v = Math.Max(v, -32768f);
                 return (short)(v + Math.Sign(v) * 0.5f);
             }
+
+            if (_pcm16Scratch == null || _pcm16Scratch.Length != data.Length)
+                _pcm16Scratch = new short[data.Length];
+            var pcm16 = _pcm16Scratch;
             for (int i = 0; i < data.Length; i++)
-                frameData[i] = FloatToS16(data[i]);
+                pcm16[i] = FloatToS16(data[i]);
+
+            if (_sourceType == RtcAudioSourceType.AudioSourceMicrophone)
+                AecBus.ProcessCapture(pcm16, sampleRate, channels);
+
+            // Each captured frame gets its own backing buffer so the native encoder can safely
+            // consume it asynchronously after request.Send() returns.
+            var frameData = new NativeArray<short>(pcm16.Length, Allocator.Persistent);
+            for (int i = 0; i < pcm16.Length; i++)
+                frameData[i] = pcm16[i];
 
             // Capture the frame.
             using var request = FFIBridge.Instance.NewRequest<CaptureAudioFrameRequest>();
@@ -280,6 +298,7 @@ namespace LiveKit
             if (_disposed) return;
 
             if (disposing) Stop();
+            else ReleaseAecCaptureRegistration();
 
             var pendingCount = PendingFrameCount();
             if (pendingCount > 0)
@@ -296,6 +315,15 @@ namespace LiveKit
             }
             _disposed = true;
             Utils.Debug($"{DebugTag} disposed");
+        }
+
+        private void ReleaseAecCaptureRegistration()
+        {
+            if (!_captureRegisteredToAec)
+                return;
+
+            _captureRegisteredToAec = false;
+            AecBus.ReleaseCapture();
         }
 
         private PendingAudioFrame ReleasePendingFrameData(ulong requestAsyncId)

@@ -23,6 +23,7 @@ namespace LiveKit
         private AudioResampler _resampler = new AudioResampler();
         private readonly object _lock = new object();
         private bool _disposed = false;
+        private short[] _reverseBuffer;
 
         // Pre-buffering state to prevent audio underruns
         private bool _isPrimed = false;
@@ -63,6 +64,7 @@ namespace LiveKit
             _probe = _audioSource.gameObject.AddComponent<AudioProbe>();
             _probe.AudioRead += OnAudioRead;
             _audioSource.Play();
+            AecBus.RegisterReverse(this);
 
             // Subscribe to application pause events to handle background/foreground transitions
             MonoBehaviourContext.OnApplicationPauseEvent += OnApplicationPause;
@@ -77,6 +79,7 @@ namespace LiveKit
                 return;
             }
 
+            var submitReverse = false;
             lock (_lock)
             {
                 // Initialize or reinitialize buffer if audio format changed
@@ -170,7 +173,47 @@ namespace LiveKit
                 {
                     data[i] = S16ToFloat(_tempBuffer[i]);
                 }
+
+                submitReverse = true;
             }
+
+            // Feed the final playback samples to APM's reverse stream OUTSIDE the lock.
+            // Keeping the FFI round-trip inside _lock would serialize audio thread frames
+            // against the FFI callback thread that feeds _buffer, causing playback jitter
+            // and AEC divergence.
+            if (submitReverse && !_disposed)
+            {
+                SubmitReverseToAec(data, channels, sampleRate);
+            }
+        }
+
+        private void SubmitReverseToAec(float[] data, int channels, int sampleRate)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return;
+            }
+
+            _reverseBuffer ??= new short[data.Length];
+            if (_reverseBuffer.Length != data.Length)
+            {
+                _reverseBuffer = new short[data.Length];
+            }
+
+            static short FloatToS16(float v)
+            {
+                v *= 32768f;
+                if (v > 32767f) v = 32767f;
+                if (v < -32768f) v = -32768f;
+                return (short)(v + Math.Sign(v) * 0.5f);
+            }
+
+            for (int i = 0; i < data.Length; i++)
+            {
+                _reverseBuffer[i] = FloatToS16(data[i]);
+            }
+
+            AecBus.ProcessReverse(this, _reverseBuffer, sampleRate, channels);
         }
 
         // Called when application goes to background or returns to foreground
@@ -247,6 +290,7 @@ namespace LiveKit
             // touching partially disposed state.
             FfiClient.Instance.AudioStreamEventReceived -= OnAudioStreamEvent;
             MonoBehaviourContext.OnApplicationPauseEvent -= OnApplicationPause;
+            AecBus.UnregisterReverse(this);
 
             lock (_lock)
             {

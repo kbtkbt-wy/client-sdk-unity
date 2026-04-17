@@ -149,6 +149,18 @@ namespace LiveKit.Internal.FFIClients
                 case RemixAndResampleRequest remixAndResampleRequest:
                     ffiRequest.RemixAndResample = remixAndResampleRequest;
                     break;
+                case NewApmRequest newApmRequest:
+                    ffiRequest.NewApm = newApmRequest;
+                    break;
+                case ApmProcessStreamRequest apmProcessStreamRequest:
+                    ffiRequest.ApmProcessStream = apmProcessStreamRequest;
+                    break;
+                case ApmProcessReverseStreamRequest apmProcessReverseStreamRequest:
+                    ffiRequest.ApmProcessReverseStream = apmProcessReverseStreamRequest;
+                    break;
+                case ApmSetStreamDelayRequest apmSetStreamDelayRequest:
+                    ffiRequest.ApmSetStreamDelay = apmSetStreamDelayRequest;
+                    break;
                 case LocalTrackMuteRequest localTrackMuteRequest:
                     ffiRequest.LocalTrackMute = localTrackMuteRequest;
                     break;
@@ -280,6 +292,10 @@ namespace LiveKit.Internal.FFIClients
                 || request.CaptureAudioFrame != null
                 || request.NewAudioResampler != null
                 || request.RemixAndResample != null
+                || request.NewApm != null
+                || request.ApmProcessStream != null
+                || request.ApmProcessReverseStream != null
+                || request.ApmSetStreamDelay != null
                 || request.E2Ee != null
                 ||
 
@@ -346,6 +362,10 @@ namespace LiveKit.Internal.FFIClients
                 || response.CaptureAudioFrame != null
                 || response.NewAudioResampler != null
                 || response.RemixAndResample != null
+                || response.NewApm != null
+                || response.ApmProcessStream != null
+                || response.ApmProcessReverseStream != null
+                || response.ApmSetStreamDelay != null
                 || response.E2Ee != null
                 ||
 
