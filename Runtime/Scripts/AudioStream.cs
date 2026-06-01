@@ -31,9 +31,9 @@ namespace LiveKit
         private const float PrimingThresholdSeconds = 0.03f;  // Wait for 30ms of data before playing
 
         // Drift correction: skip samples when buffer fills up due to clock drift
-        // Keep this conservative so we only trim明显积压的缓冲，避免长时间听感被连续丢样本拉坏。
-        private const float HighWaterMarkPercent = 0.80f;    // Target 80% fill level after correction
-        private const float SkipPerCallbackPercent = 0.01f;  // Skip 1% of callback samples per call
+        // Keep this adaptive so we only trim明显积压的缓冲，避免长期越积越多。
+        private const float HighWaterMarkPercent = 0.75f;    // Target 75% fill level after correction
+        private const float MaxSkipPerCallbackPercent = 0.10f;  // Never skip more than 10% of one callback
 
         /// <summary>
         /// Creates a new audio stream from a remote audio track, attaching it to the
@@ -152,20 +152,22 @@ namespace LiveKit
                 int samplesRead = bytesRead / sizeof(short);
 
                 // Drift correction: if buffer is filling up (producer faster than consumer),
-                // skip a small number of samples to prevent overflow and keep latency bounded.
+                // trim part of the excess to prevent overflow and keep latency bounded.
                 int highWaterBytes = (int)(_buffer.Capacity * HighWaterMarkPercent);
                 int remainingBytes = _buffer.AvailableRead();
                 if (remainingBytes > highWaterBytes)
                 {
-                    int skipBytes = (int)(data.Length * sizeof(short) * SkipPerCallbackPercent);
+                    int excessBytes = remainingBytes - highWaterBytes;
                     int frameSize = channels * sizeof(short);
+                    int maxSkipBytes = (int)(data.Length * sizeof(short) * MaxSkipPerCallbackPercent);
+                    int skipBytes = Math.Min(excessBytes / 2, maxSkipBytes);
                     skipBytes -= skipBytes % frameSize; // align to frame boundary
 
                     if (skipBytes > 0)
                     {
                         _buffer.SkipRead(skipBytes);
                     }
-                }                
+                }
 
                 // Clear the entire output buffer to silence, then fill with the samples
                 // we successfully read from the ring buffer.
