@@ -31,8 +31,9 @@ namespace LiveKit
         private const float PrimingThresholdSeconds = 0.03f;  // Wait for 30ms of data before playing
 
         // Drift correction: skip samples when buffer fills up due to clock drift
-        private const float HighWaterMarkPercent = 0.50f;    // Target 50% fill level after correction
-        private const float SkipPerCallbackPercent = 0.05f;  // Skip 5% of callback samples per call
+        // Keep this conservative so we only trim明显积压的缓冲，避免长时间听感被连续丢样本拉坏。
+        private const float HighWaterMarkPercent = 0.80f;    // Target 80% fill level after correction
+        private const float SkipPerCallbackPercent = 0.01f;  // Skip 1% of callback samples per call
 
         /// <summary>
         /// Creates a new audio stream from a remote audio track, attaching it to the
